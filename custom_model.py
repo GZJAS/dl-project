@@ -4,16 +4,13 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from onmt.modules import GlobalAttention, MultiHeadedAttention
 
-attn = GlobalAttention(512)
-m_attn = MultiHeadedAttention(2, 512)
-
-distinct_tokens = range(30)
+CUDA = True
 
 
 class LipEncoder(nn.Module):
     def __init__(self):
         super(LipEncoder, self).__init__()
-        self.gru = nn.GRU(input_size=512, hidden_size=256, num_layers=2, batch_first=True, bidirectional=True)
+        self.gru = nn.GRU(input_size=512, hidden_size=256, num_layers=1, batch_first=True, bidirectional=True)
         self.conv1 = nn.Conv3d(in_channels=1, out_channels=128, kernel_size=(2, 3, 3), stride=2)
         self.bn1 = nn.BatchNorm3d(128)
         self.conv2 = nn.Conv3d(in_channels=128, out_channels=256, kernel_size=(2, 3, 3), stride=2)
@@ -44,16 +41,19 @@ class LipEncoder(nn.Module):
 
 
 class Speller(nn.Module):
-    def __init__(self):
+    def __init__(self, distinct_tokens):
         super(Speller, self).__init__()
         # embedding not needed for char-level model:
         # self.vocab_to_hidden = nn.Embedding(, 1024)
-        self.to_tokens = nn.Linear(512, len(distinct_tokens))
-        self.gru = nn.GRU(input_size=len(distinct_tokens), hidden_size=512, num_layers=2, batch_first=True,
+        self.to_tokens = nn.Linear(512, distinct_tokens)
+        self.gru = nn.GRU(input_size=distinct_tokens, hidden_size=512, num_layers=1, batch_first=True,
                           bidirectional=False)
+        # self.attn = GlobalAttention(512, attn_type="general")
+        self.attn = MultiHeadedAttention(2, 512)
+        self.distinct_tokens = distinct_tokens
 
     @staticmethod
-    def to_one_hot(input_x, vocab_size=len(distinct_tokens)):
+    def to_one_hot(input_x, vocab_size):
         if type(input_x) is Variable:
             input_x = input_x.data
         input_type = type(input_x)
@@ -62,32 +62,31 @@ class Speller(nn.Module):
         input_x = input_x.unsqueeze(2).type(torch.LongTensor)
         onehot_x = Variable(
             torch.LongTensor(batch_size, time_steps, vocab_size).zero_().scatter_(-1, input_x, 1)).type(input_type)
-        return onehot_x
+        if CUDA:
+            return onehot_x.type(torch.cuda.FloatTensor)
+        return onehot_x.type(torch.FloatTensor)
 
     def forward_step(self, input, decoder_hidden):
         gru_output, decoder_hidden = self.gru(input, decoder_hidden)
         return self.to_tokens(gru_output), decoder_hidden
 
     def forward(self, initial_decoder_hidden, targets, encoder_outputs, teacher_forced=True):
-        # if teacher_forced:
-        #     one_hot_target = self.to_one_hot(targets).type(torch.FloatTensor)
-        #     output, last_hidden_state = self.gru(one_hot_target, initial_decoder_hidden)
-        #     return self.to_tokens(output)
         decoder_hidden = initial_decoder_hidden
-        input = self.to_one_hot(targets[:, [0]]).type(torch.FloatTensor)  # should always be <sos>
+        input = self.to_one_hot(targets[:, [0]], self.distinct_tokens)  # should always be <sos>
         outputs = []
-        for timestep in range(targets.size()[1]):
-            # output, decoder_hidden = self.gru(targets[:, [timestep], :], decoder_hidden)
+        for timestep in range(targets.size()[1] - 1):
             gru_output, decoder_hidden = self.gru(input, decoder_hidden)
-            attn_output, attn_dist = attn(input=decoder_hidden.permute(1, 0, 2)[:, -1:, :],
-                                          memory_bank=encoder_outputs)
-            attn_output, attn_dist = attn_output.permute(1, 0, 2), attn_dist.permute(1, 0, 2)
+            # attn_output, attn_dist = self.attn(input=decoder_hidden.permute(1, 0, 2)[:, -1:, :],
+            #                                    memory_bank=encoder_outputs)
+            # attn_output, attn_dist = attn_output.permute(1, 0, 2), attn_dist.permute(1, 0, 2)
+            attn_output, attn_dist = self.attn(query=decoder_hidden.permute(1, 0, 2)[:, -1:, :],
+                                               key=encoder_outputs, value=encoder_outputs)
             output_tokens = self.to_tokens(attn_output)
             outputs.append(output_tokens)
             # _, topi = output_tokens.data.topk(1, dim=2)
             # input = self.to_one_hot(topi.squeeze(0)).type(torch.FloatTensor)
             if teacher_forced:
-                input = self.to_one_hot(targets[:, [timestep]]).type(torch.FloatTensor)
+                input = self.to_one_hot(targets[:, [timestep + 1]], self.distinct_tokens)
             else:
                 input = output_tokens
         return torch.cat(outputs, dim=1)
@@ -111,16 +110,4 @@ class Combined(nn.Module):
 
     @staticmethod
     def encoder_hidden_to_decoder_hidden(encoder_hidden):
-        return encoder_hidden.permute(1, 0, 2).view(encoder_hidden.size()[1], 2, -1).permute(1, 0, 2)
-
-
-com = Combined(LipEncoder(), Speller())
-criterion = nn.CrossEntropyLoss()
-optim = torch.optim.Adam(com.parameters(), lr=1e-4)
-print(com(Variable(torch.randn(1, 1, 120, 220, 150)), torch.LongTensor([1, 2, 3]).unsqueeze(0)))
-# for lips, targets in range(0, 5):
-#     optim.zero_grad()
-#     pred = com(lips, targets)
-#     loss = criterion(pred.permute(0, 2, 1), targets)
-#     loss.backward()
-#     optim.step()
+        return encoder_hidden.permute(1, 0, 2).view(encoder_hidden.size()[1], 1, -1).permute(1, 0, 2)
