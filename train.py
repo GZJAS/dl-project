@@ -20,31 +20,64 @@ import string
 import re
 import onmt
 import pickle
-from torch.utils.data import Dataset
-from datasets import LipDataset, distinct_tokens, tokens2index, index2tokens
+from torch.utils.data.sampler import SubsetRandomSampler
+from torch.utils.data import DataLoader
+from datasets import LipDataset, distinct_tokens, tokens2index, index2tokens, collate_fn
 from custom_model import Combined, LipEncoder, Speller, CUDA
+import pendulum
 
 EPOCHS = 100
+MANUAL_BATCH = 1
 
-com = Combined(LipEncoder(), Speller(len(distinct_tokens)))
-if CUDA:
-    com = com.cuda()
-criterion = nn.CrossEntropyLoss()
-optim = torch.optim.Adam(com.parameters(), lr=1e-4)
 data_set = LipDataset()
 print('Loaded dataset')
-data_loader = torch.utils.data.DataLoader(data_set, batch_size=1, shuffle=True)
+training_loader = DataLoader(data_set, batch_size=1, num_workers=0, sampler=SubsetRandomSampler(list(range(0, 5000))),
+                             pin_memory=True, collate_fn=collate_fn)
+test_loader = DataLoader(data_set, batch_size=2, num_workers=0,
+                         sampler=SubsetRandomSampler(list(range(5000, len(data_set)))),
+                         pin_memory=True, collate_fn=collate_fn)
 
-for epoch in range(500):
+curr_epoch = 0
+com = Combined(LipEncoder(), Speller(len(distinct_tokens)))
+if Path("model").exists():
+    com.load_state_dict(torch.load("model"))
+    curr_epoch = pickle.load(open("epoch", 'rb')) + 1
+if CUDA:
+    com = com.cuda()
+optim = torch.optim.Adam(com.parameters(), lr=1e-3)
+criterion = nn.CrossEntropyLoss(ignore_index=0)
+
+for epoch in range(curr_epoch, 500):
     print("EPOCH: {}".format(epoch))
     print("---------------------------------------")
-    for key, (lips, target) in data_loader:
+    i = 0
+    manual_batch_loss = 0
+    for key, (lips, target) in training_loader:
+        # print("Mean: {}, Std: {}".format(lips.mean(), lips.std()))
         if CUDA:
             lips, target = lips.cuda(), target.cuda()
+        target = Variable(target)
+        pred, attn_dist = com(Variable(lips), target)
+        # pred = com(Variable(lips), target)
+        loss = criterion(pred.permute(0, 2, 1), target[:, 1:])
+        # manual_batch_loss = manual_batch_loss + loss
+        # if i % MANUAL_BATCH == 0:
+        #     ave_loss = manual_batch_loss / MANUAL_BATCH
+        #     print(ave_loss.data[0])
+        #     optim.zero_grad()
+        #     ave_loss.backward()
+        #     optim.step()
+        #     manual_batch_loss = 0
+        #     ave_loss = 0
         optim.zero_grad()
-        pred = com(Variable(lips), target)
-        loss = criterion(pred.permute(0, 2, 1), Variable(target[:, 1:]))
+        print(loss.data[0])
+        print(attn_dist[:, :5, 0].mean()/attn_dist[:, 5:, 0].mean())
+        # print(attn_dist)
         loss.backward()
         optim.step()
-        print("".join([index2tokens[t] for t in target[0][1:]]))
-        print("".join([index2tokens[t] for t in pred[0].topk(1, 1)[1].squeeze().data]))
+        print("".join([index2tokens[t] for t in target.data[0][1:] if t != 0]))
+        print("".join([index2tokens[t] for t in pred[0].topk(1, 1)[1].squeeze().data if t != 0]))
+        i = i + 1
+    torch.save(com.state_dict(), "model")
+    pickle.dump(epoch, open("epoch", 'wb'))
+    # for keys, (lips, target) in test_loader:

@@ -62,14 +62,15 @@ def create_pkl(mp4path):
 #                    total=len(list(root_path.glob('**/*.mp4')))):
 #     pass
 
-mouth_frames = {}
-print(len([t for t in root_path.glob('**/*.pkl') if 'straightcam' in t.parts]))
-i = 0
-for t in [t for t in root_path.glob('**/*.pkl') if 'straightcam' in t.parts]:
-    mouth_frames[t.parent.parts[-4:] + (t.stem.lower(),)] = np.load(t.as_posix())
-    print(t.parent.parts[-4:] + (t.stem.lower(),))
-    print(i)
-    i = i+1
+# mouth_frames = {}
+# print(len([t for t in root_path.glob('**/*.pkl') if 'straightcam' in t.parts]))
+# i = 0
+# with open('mouth_frames', 'wb') as f:
+#     for t in [t for t in root_path.glob('**/*.pkl') if 'straightcam' in t.parts]:
+#         print(t.parent.parts[-4:] + (t.stem.lower(),))
+#         print(i)
+#         pickle.dump((t.parent.parts[-4:] + (t.stem.lower(),), np.load(t.as_posix())), f, protocol=4)
+#         i = i+1
 
 # mouth_frames = {t.parent.parts[-4:] + (t.stem.lower(),): np.load(t.as_posix()) for t in root_path.glob('**/*.pkl') if
 #                 'straightcam' in t.parts}
