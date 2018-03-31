@@ -44,6 +44,10 @@ for srcwavpath in root_path.glob('**/*.wav'):
     # mfcc_feat = lmfe(tgtsig, 16000, frame_length=0.025, num_filters=80)
 
 
+
+# (wav1 + wav2[:len(wav1)])/2
+# np.pad(wav2, mode='constant', pad_width=(0, 50)).shape
+
 def create_pkl(mp4path):
     tgtpklpath = (mp4path.parent / (mp4path.stem + ".pkl"))
     # if not tgtmfccpath.exists():
@@ -55,7 +59,6 @@ def create_pkl(mp4path):
             faces.dump(tgtpklpath.as_posix())
         except Exception as e:
             print("{}: {}".format(tgtpklpath, e))
-
 
 # pool = multiprocessing.Pool(8)
 # for _ in tqdm.tqdm(pool.imap_unordered(create_pkl, list(root_path.glob('**/*.mp4'))),

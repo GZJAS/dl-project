@@ -13,9 +13,9 @@ class LipEncoder(nn.Module):
     def __init__(self):
         super(LipEncoder, self).__init__()
         self.gru = nn.GRU(input_size=512, hidden_size=256, num_layers=1, batch_first=True, bidirectional=True)  # 256
-        self.conv1 = nn.Conv3d(in_channels=1, out_channels=128, kernel_size=(2, 3, 3), stride=2)
+        self.conv1 = nn.Conv3d(in_channels=1, out_channels=128, kernel_size=(2, 3, 3), stride=2, padding=(1, 0, 0))
         self.bn1 = nn.BatchNorm3d(128)
-        self.conv2 = nn.Conv3d(in_channels=128, out_channels=256, kernel_size=(2, 3, 3), stride=2)
+        self.conv2 = nn.Conv3d(in_channels=128, out_channels=256, kernel_size=(2, 3, 3), stride=2, padding=(1, 0, 0))
         self.bn2 = nn.BatchNorm3d(256)
         self.conv3 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=(3, 3), stride=2)
         self.bn3 = nn.BatchNorm2d(512)
@@ -106,12 +106,12 @@ class Speller(nn.Module):
             if teacher_forced:
                 # input = self.to_one_hot(targets[:, [timestep + 1]], self.distinct_tokens)
                 # input = target_embeddings[:, (timestep + 1):(timestep + 2), :]
-                input = self.vocab_to_embedding(targets[:, (timestep + 1):(timestep+2)])
+                input = self.vocab_to_embedding(targets[:, (timestep + 1):(timestep + 2)])
             else:
                 # input = output_tokens
                 # TODO: the following probably doesn't work
                 input = self.vocab_to_embedding(output_tokens.topk(1, dim=2)[1].squeeze(1))
-        return torch.cat(outputs, dim=1) , torch.cat(attn_dists, dim=1).data
+        return torch.cat(outputs, dim=1), torch.cat(attn_dists, dim=1).data
         # return outputs
 
     def decode(self, decoder_hidden, beam_width=6):
@@ -131,7 +131,7 @@ class Combined(nn.Module):
         enc_out, enc_hidden = self.enc(lips)
         teacher_force = False
         if targets is not None:
-            teacher_force = True if np.random.random_sample() < 0.1 else False
+            teacher_force = True if np.random.random_sample() < 0.25 else False
         return self.dec(Combined.encoder_hidden_to_decoder_hidden(enc_hidden), enc_out, targets=targets,
                         teacher_forced=teacher_force)
 
