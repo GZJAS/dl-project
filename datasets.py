@@ -96,13 +96,26 @@ def pad_tensor(vec, pad, dim, val=0):
 
 
 def collate_fn(lst):
-    keys, tensor_lists = zip(*lst)
-    mouth_frames, text_indexes = zip(*tensor_lists)
-    max_mouth_time = max([t.size()[1] for t in mouth_frames])
-    mouth_frames = [pad_tensor(x, pad=max_mouth_time, dim=1) for x in mouth_frames]
-    max_target_time = max([t.size()[0] for t in text_indexes])
-    text_indexes = [pad_tensor(x, pad=max_target_time, dim=0) for x in text_indexes]
-    return keys, (torch.stack(mouth_frames), torch.stack(text_indexes))
+    clip_lst, mfcc_feat_lst, lips_1_lst, lips_2_lst, text_indexes_lst = zip(*lst)
+    if mfcc_feat_lst[0] is None:
+        mfcc_feat = None
+    else:
+        max_mfcc_time = max([t.size()[0] for t in mfcc_feat_lst])
+        mfcc_feat = torch.stack([pad_tensor(x, pad=max_mfcc_time, dim=0) for x in mfcc_feat_lst])
+
+    if lips_1_lst[0] is None:
+        lips_1 = None
+    else:
+        max_mouth_time = max([t.size()[1] for t in lips_1_lst])
+        lips_1 = torch.stack([pad_tensor(x, pad=max_mouth_time, dim=1) for x in lips_1_lst])
+    if lips_2_lst[0] is None:
+        lips_2 = None
+    else:
+        max_mouth_time = max([t.size()[1] for t in lips_1_lst])
+        lips_2 = torch.stack([pad_tensor(x, pad=max_mouth_time, dim=1) for x in lips_2_lst])
+    max_target_time = max([t.size()[0] for t in text_indexes_lst])
+    text_indexes = torch.stack([pad_tensor(x, pad=max_target_time, dim=0) for x in text_indexes_lst])
+    return clip_lst, mfcc_feat, lips_1, lips_2, text_indexes
 
 
 def mix_audio(wav1, wav2):
@@ -178,7 +191,8 @@ class PhonemeDataset(Dataset):
             else:
                 audio_2 = audio_frames[other_clip]
                 mfcc_feat = lmfe(mix_audio(audio_1, audio_2), 16000, frame_length=0.025, num_filters=80)
-            mfcc_feat = (fractional_index(mfcc_feat, phn_seq[0][0], phn_seq[-1][1]) - 10) / 2
+            mfcc_feat = torch.from_numpy((fractional_index(mfcc_feat, phn_seq[0][0], phn_seq[-1][1]) - 10) / 2).type(
+                torch.FloatTensor)
         else:
             mfcc_feat = None
 
@@ -188,7 +202,7 @@ class PhonemeDataset(Dataset):
                 lips_1 = np.flip(lips_1, axis=2).copy()
             lips_1 = (torch.from_numpy(lips_1).unsqueeze(0).type(torch.FloatTensor) - 128) / 64
             if self.channels > 1:
-                if beg_v > len(mouth_frames[other_clip]):
+                if beg_v >= len(mouth_frames[other_clip]):
                     lips_2 = np.zeros([1, lips_1.shape[2], lips_1.shape[3]])
                 else:
                     lips_2 = mouth_frames[other_clip][beg_v:end_v]
