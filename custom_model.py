@@ -1,9 +1,9 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from onmt.modules import GlobalAttention
 from torch.autograd import Variable
-from onmt.modules import GlobalAttention, MultiHeadedAttention
-import numpy as np
 
 CUDA = True
 
@@ -45,8 +45,6 @@ class LipEncoder(nn.Module):
         self.bn5 = nn.BatchNorm2d(512)
         self.conv6 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3, 3), stride=2)
         self.bn6 = nn.BatchNorm2d(512)
-        # self.conv7 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3, 3), stride=2)
-        # self.bn7 = nn.BatchNorm2d(512)
         self.fc1 = nn.Linear(1024, 512)
 
     def forward(self, x, lengths=None):
@@ -58,7 +56,6 @@ class LipEncoder(nn.Module):
         x = F.leaky_relu(self.bn4(self.conv4(x)))
         x = F.leaky_relu(self.bn5(self.conv5(x)))
         x = F.leaky_relu(self.bn6(self.conv6(x)))
-        # x = F.leaky_relu(self.bn7(self.conv7(x)))
         x = x.view(x_shape[0], x_shape[2], -1)
         x = self.fc1(x)
         output, hidden = self.gru(x)
@@ -68,16 +65,14 @@ class LipEncoder(nn.Module):
 class Speller(nn.Module):
     def __init__(self, distinct_tokens, encoder_count, sos, eos, max_len=70):
         super(Speller, self).__init__()
-        # embedding not needed for char-level model:
-        self.vocab_to_embedding = nn.Embedding(distinct_tokens + 1, 8)  # 128 #+1 for padding
-        self.to_tokens = nn.Linear(encoder_count * 512, distinct_tokens + 1)  # 512
+        self.vocab_to_embedding = nn.Embedding(distinct_tokens + 1, 8)  # +1 for padding
+        self.to_tokens = nn.Linear(encoder_count * 512, distinct_tokens + 1)
         self.initial_hiddens = nn.Linear(encoder_count * 512, 512)
         self.gru = nn.GRU(input_size=8, hidden_size=512, num_layers=1, batch_first=True,
                           bidirectional=False, dropout=0.15)
         self.attns = [GlobalAttention(512, attn_type="general") for _ in range(0, encoder_count)]
         for i in range(0, encoder_count):
-            setattr(self, "attn_{}".format(i+1), self.attns[i])
-        # self.attn = MultiHeadedAttention(1, 512)
+            setattr(self, "attn_{}".format(i + 1), self.attns[i])
         self.distinct_tokens = distinct_tokens
         self.max_len = max_len
         self.sos = sos
@@ -98,7 +93,6 @@ class Speller(nn.Module):
         return onehot_x.type(torch.FloatTensor)
 
     def forward(self, initials_and_encoder_outputs, targets=None, teacher_forced=True):
-        # print("{}: Beginning decoder".format(pendulum.now()))
         outputs = []
         all_attn_dists = []
         initial_decoder_hiddens, all_encoder_outputs = list(zip(*initials_and_encoder_outputs))
@@ -108,14 +102,7 @@ class Speller(nn.Module):
         batch_size = decoder_hidden.shape[1]
         input = self.vocab_to_embedding(Variable(torch.LongTensor(batch_size, 1).fill_(self.sos).cuda()))
         if targets is not None:
-            # input = self.to_one_hot(targets[:, [0]], self.distinct_tokens)  # should always be <sos>
-            # target_embeddings = self.vocab_to_embedding(targets)
-            # input = self.vocab_to_embedding(targets[:, 0:1])
-            # outputs = []
             batch_size, timesteps = targets.size()
-            # outputs = torch.FloatTensor(batch_size, timesteps, self.distinct_tokens)
-            # if CUDA:
-            #     outputs = outputs.cuda()
         else:
             timesteps = self.max_len
         for timestep in range(timesteps - 1):
@@ -125,37 +112,23 @@ class Speller(nn.Module):
                                              zip(self.attns, all_encoder_outputs)])
             attn_outputs, attn_dists = [attn_output.permute(1, 0, 2) for attn_output in attn_outputs], [
                 attn_dist.permute(1, 0, 2) for attn_dist in attn_dists]
-            # attn_output, attn_dist = self.attn(query=decoder_hidden.permute(1, 0, 2)[:, -1:, :],
-            #                                    key=encoder_outputs, value=encoder_outputs)
             all_attn_dists.append(attn_dists)
             output_tokens = self.to_tokens(torch.cat(attn_outputs, dim=2))
             outputs.append(output_tokens)
-            # outputs[:, [timestep], :] = output_tokens.data
-            # _, topi = output_tokens.data.topk(1, dim=2)
-            # input = self.to_one_hot(topi.squeeze(0)).type(torch.FloatTensor)
             if teacher_forced:
-                # input = self.to_one_hot(targets[:, [timestep + 1]], self.distinct_tokens)
-                # input = target_embeddings[:, (timestep + 1):(timestep + 2), :]
                 input = self.vocab_to_embedding(targets[:, (timestep + 1):(timestep + 2)])
             else:
-                # input = output_tokens
                 input = self.vocab_to_embedding(output_tokens.topk(1, dim=2)[1].squeeze(1))
         return torch.cat(outputs, dim=1), (torch.cat(all_attn_dists, dim=1).data for attn_dist in zip(*all_attn_dists))
         # return outputs
-
-    def decode(self, decoder_hidden, beam_width=6):
-        # freely decode with beam search, returning top result
-        return
 
 
 class Combined(nn.Module):
     def __init__(self, dec, *encs):
         super(Combined, self).__init__()
-        # embedding not needed for char-level model:
-        # self.vocab_to_hidden = nn.Embedding(, 1024)
         self.encs = encs
         for i in range(0, len(encs)):
-            setattr(self, "enc_{}".format(i+1), self.encs[i])
+            setattr(self, "enc_{}".format(i + 1), self.encs[i])
         self.dec = dec
 
     def forward(self, targets=None, *inputs):

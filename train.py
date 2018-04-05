@@ -1,34 +1,17 @@
-import scipy.io.wavfile as wav
-from nnresample import resample
-# from scipy.signal import resample
-from speechpy.feature import lmfe
-from pathlib import Path
-import numpy as np
-from facedetection.face_detection import FaceDetector
-from mediaio.video_io import VideoFileReader
-from skimage.io import imread, imsave
-from skvideo.io import vread
-from skvideo.utils import rgb2gray
-import multiprocessing
-import tqdm
 import itertools
+import pickle
+from pathlib import Path
+
+import editdistance
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Variable
-import string
-import re
-import onmt
-import pickle
-from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data import DataLoader
-from datasets import PhonemeDataset, distinct_phns, tokens2index, index2tokens, collate_fn, pad_tensor
-from custom_model import Combined, LipEncoder, AudioEncoder, Speller, CUDA
-# import pendulum
-import editdistance
+from torch.utils.data.sampler import SubsetRandomSampler
 
-EPOCHS = 100
-MANUAL_BATCH = 1
+from custom_model import Combined, LipEncoder, AudioEncoder, Speller, CUDA
+from datasets import PhonemeDataset, distinct_phns, tokens2index, index2tokens, collate_fn
 
 data_set = PhonemeDataset(seq_len=70, channels=2, audio='same', lips=True)
 test_data_set = PhonemeDataset(seq_len=70, channels=2, audio='different', lips=True)
@@ -45,17 +28,17 @@ eos = tokens2index["<eos>"]
 lip_encoder = LipEncoder()
 if Path("lip_encoder").exists():
     lip_encoder.load_state_dict(torch.load("lip_encoder"))
+
 audio_encoder = AudioEncoder()
 if Path("audio_encoder").exists():
     audio_encoder.load_state_dict(torch.load("audio_encoder"))
+
 speller = Speller(len(distinct_phns), 3, sos=sos, eos=eos, max_len=70)
 if Path("speller").exists():
     speller.load_state_dict(torch.load("speller"))
+
 curr_epoch = 0
 com = Combined(speller, audio_encoder, lip_encoder, lip_encoder)
-# if Path("model").exists():
-#     com.load_state_dict(torch.load("model"))
-#     curr_epoch = pickle.load(open("epoch", 'rb')) + 1
 if CUDA:
     com = com.cuda()
 optim = torch.optim.Adam(com.parameters(), lr=2e-4)
@@ -93,7 +76,7 @@ for epoch in range(curr_epoch, 500):
         loss = criterion(pred.permute(0, 2, 1)[:, :, :target.shape[1] - 1], target[:, 1:])
         test_per = test_per + phn_error_rate(pred, target)
         test_loss = test_loss + loss.data[0]
-    print("Phoneme error rate: {}".format(test_per / len(test_loader)))
+    print("Phoneme test error rate: {}".format(test_per / len(test_loader)))
     print("Average test loss: {}".format(test_loss / len(test_loader)))
 
     for quintuplet in training_loader:
